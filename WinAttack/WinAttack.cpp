@@ -21,7 +21,7 @@
 #define HMODULELISTBOX    400
 #define WMODULELISTBOX    400
 #define HDLLLISTBOX    320
-#define WDLLLISTBOX    300
+#define WDLLLISTBOX    200
 
 // 전역 변수:
 HINSTANCE hInst;                                // 현재 인스턴스입니다.
