@@ -28,9 +28,12 @@ HINSTANCE hInst;                                // 현재 인스턴스입니다.
 WCHAR szTitle[MAX_LOADSTRING];                  // 제목 표시줄 텍스트입니다.
 WCHAR szWindowClass[MAX_LOADSTRING];            // 기본 창 클래스 이름입니다.
 HWND g_hWnd;
-DWORD arPID[2048];
-TCHAR *arProcName[2048];
-int processNum;                                 //조회된 프로세스의 갯수
+DWORD arPID[2048];                              // PID 배열
+TCHAR *arProcName[2048];                        // 프로세스명 배열
+BYTE *arModAddr[256];                           // 모듈주소 배열
+TCHAR *arModName[2048];                         // 모듈명 배열
+int processNum;                                 // 조회된 프로세스의 갯수
+int moduleNum;                                  // 조회된 모듈의 갯수
 SYSTEMTIME stime;
 TCHAR szProcessNum[128];
 TCHAR szDllDirInfo1[128];
@@ -163,6 +166,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     HFONT hLogFont;
+    int index = 0;
+    int i;
 
     switch (message)
     {
@@ -172,6 +177,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
             //to-do : 메뉴를 구성한다 
             //to-do : 도움말을 보강한다 
+            //to-do : 아이콘 만들기
 
             //로그뷰를 생성
             hLogView = CreateWindow(L"edit", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY, HMARGIN, TOPMARGIN + HLISTBOX + HTEXT + VMARGIN, WLOGVIEW, HLOGVIEW, hWnd, (HMENU)ID_LOGVIEW, hInst, NULL);
@@ -240,6 +246,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 break;
             case IDM_EXIT:
                 DestroyWindow(hWnd);
+                break;
+            case ID_MAIN_LISTBOX:
+                switch (HIWORD(wParam))
+                {
+                case LBN_SELCHANGE:
+                    SendMessage(hModuleListBox, LB_RESETCONTENT, 0, 0);
+                    index = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
+
+                    LogViewOutput(L"모듈 목록 조회", 100);
+                    GetModuleList(arPID[index]);
+                    LogViewOutput(L"모듈 목록 조회", 900);
+
+                    for (i = 0; i < moduleNum; i++)
+                    {
+                        SendMessage(hModuleListBox, LB_ADDSTRING, 0, (LPARAM)arModName[i]);
+                    }
+                    break;
+                }
                 break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
@@ -385,7 +409,7 @@ void LogViewOutput(LPCTSTR lpszMsg, int code)
 void GetProcessList()
 {
     HANDLE hSnapshot;
-    PROCESSENTRY32 pe = { sizeof(PROCESSENTRY32), };
+    PROCESSENTRY32 pe = {sizeof(PROCESSENTRY32), };
 
     hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPALL, NULL);
 
@@ -410,32 +434,52 @@ void GetProcessList()
 void GetModuleList(DWORD dwPID)
 {
     HANDLE hSnapshot;
-    MODULEENTRY32 me = {sizeof(MODULEENTRY32)};
+    TCHAR s[128];
 
-    hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, dwPID);
+    MODULEENTRY32 me = {sizeof(MODULEENTRY32), };
 
-    Module32First(hSnapshot, &me);
-    do
+    hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE32 | TH32CS_SNAPMODULE, dwPID);
+
+    if (hSnapshot == INVALID_HANDLE_VALUE)
     {
-        //to-do : 가져온 모듈 목록을 뿌려준다 
-        //me.szModule
-    } while (Module32Next(hSnapshot, &me));
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL, 
+            GetLastError(),
+            MAKELANGID(LANG_NEUTRAL, 
+            SUBLANG_DEFAULT),
+            s, 256, NULL);
 
+        OutputDebugString(s);
+    }
+
+    int i = 0;
+    if (Module32First(hSnapshot, &me))
+    {
+        do
+        {
+            memset(arModAddr[i], 0, sizeof(me.modBaseAddr));
+            memcpy(arModAddr[i], me.modBaseAddr, sizeof(me.modBaseAddr));
+            arModName[i] = (TCHAR*)malloc(sizeof(me.szModule));
+            lstrcpy(arModName[i], me.szModule);
+            i++;
+        } while (Module32Next(hSnapshot, &me));
+    }
+
+    moduleNum = i;
+ 
     CloseHandle(hSnapshot);
 }
 
 // 프로세스 목록을 배열에서 가져와서 메인 리스트박스에 보여줌
 void DrawMainListBox()
 {
-    for (int i = 0; i < processNum; i++)
+    int i;
+    for (i = 0; i < processNum; i++)
     {
-        if (arPID[i] != 0)
-        {
             TCHAR output[128];
 
             wsprintf(output, L"%s  [%d]", arProcName[i], arPID[i]);
             SendMessage(hMainListBox, LB_ADDSTRING, 0, (LPARAM)output);
-        }
     }
 
     wsprintf(szProcessNum, L"Processes : %d", processNum);
