@@ -38,6 +38,7 @@ SYSTEMTIME stime;
 TCHAR szProcessNum[128];
 TCHAR szDllDirInfo1[128];
 TCHAR szDllDirInfo2[MAX_PATH];
+TCHAR szProcPath[MAX_PATH];                     // 선택된 프로세스의 실행경로
 
 // 윈도우 핸들
 HWND hMainListBox;
@@ -54,10 +55,11 @@ INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 BOOL SetPrivilege(LPCTSTR);
 void LogViewOutput(LPCTSTR, int);
 void GetProcessList();
-void GetModuleList(DWORD);
+void GetModuleList(DWORD, LPTSTR);
 void DrawMainListBox();
 void DrawDllListBox();
 void SetClientRect(HWND, int, int);
+LPCTSTR GetMyFileName();
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -176,9 +178,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             g_hWnd = hWnd;
 
             //to-do : 메뉴를 구성한다 
-            //to-do : 도움말을 보강한다 
-            //to-do : 아이콘 만들기
-            //to-do : 프로세스 조회할 때 내 프로세스는 제외
+            //        도움말을 보강한다 
+            //        아이콘 만들기
+            //        윈도우 데코레이션
+            //        프로세스정보 뷰에 나올 내용을 추가
+            //        프로세스 검색 기능을 추가
 
             //로그뷰를 생성
             hLogView = CreateWindow(L"edit", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY, HMARGIN, TOPMARGIN + HLISTBOX + HTEXT + VMARGIN, WLOGVIEW, HLOGVIEW, hWnd, (HMENU)ID_LOGVIEW, hInst, NULL);
@@ -196,7 +200,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             else
             {
                 LogViewOutput(L"Privilege 조정", -1);
-                MessageBox(hWnd, L"Error Occured!\n\nThis Application must be Stopped Immediately!", L"Execution Error", MB_OK);
+                //MessageBox(hWnd, L"Error Occured!\n\nThis Application must be Stopped Immediately!", L"Execution Error", MB_OK);
             }
             LogViewOutput(L"Privilege 조정", 900);
 
@@ -250,17 +254,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 switch (HIWORD(wParam))
                 {
                 case LBN_SELCHANGE:
+                    // DLL 뷰에 모듈목록을 보여줌
                     SendMessage(hModuleListBox, LB_RESETCONTENT, 0, 0);
                     index = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
 
                     LogViewOutput(L"모듈 목록 조회", 100);
-                    GetModuleList(arPID[index]);
+                    GetModuleList(arPID[index], arProcName[index]);
                     LogViewOutput(L"모듈 목록 조회", 900);
 
                     for (i = 0; i < moduleNum; i++)
                     {
                         SendMessage(hModuleListBox, LB_ADDSTRING, 0, (LPARAM)arModName[i]);
                     }
+
+                    // 프로세스정보 뷰에 프로세스의 실행경로를 보여줌
+                    SendMessage(hProcessInfoListBox, LB_RESETCONTENT, 0, 0);
+                    SendMessage(hProcessInfoListBox, LB_ADDSTRING, 0, (LPARAM)szProcPath);
                     break;
                 }
                 break;
@@ -420,10 +429,13 @@ void GetProcessList()
     {
         do
         {
-            arPID[i] = pe.th32ProcessID;
-            arProcName[i] = (TCHAR*)malloc(sizeof(pe.szExeFile));
-            lstrcpy(arProcName[i], pe.szExeFile);
-            i++;
+            if (_tcsicmp((LPCTSTR)GetMyFileName(), (LPCTSTR)pe.szExeFile)) // 내 프로세스명은 조회 안되도록 제외시킴
+            {
+                arPID[i] = pe.th32ProcessID;
+                    arProcName[i] = (TCHAR*)malloc(sizeof(pe.szExeFile));
+                    lstrcpy(arProcName[i], pe.szExeFile);
+                    i++;
+            }
         } while (Process32Next(hSnapshot, &pe));
     }
 
@@ -433,7 +445,7 @@ void GetProcessList()
 }
 
 // PID를 입력받아 모듈 목록을 조회하여 배열에 넣어줌
-void GetModuleList(DWORD dwPID)
+void GetModuleList(DWORD dwPID, LPTSTR szProcName)
 {
     HANDLE hSnapshot;
     TCHAR s[128];
@@ -444,13 +456,16 @@ void GetModuleList(DWORD dwPID)
 
     if (hSnapshot == INVALID_HANDLE_VALUE)
     {
+        DWORD dwErr = GetLastError();
         FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
             NULL, 
-            GetLastError(),
+            dwErr,
             MAKELANGID(LANG_NEUTRAL, 
             SUBLANG_DEFAULT),
             s, 256, NULL);
 
+        OutputDebugString(s);
+        wsprintf(s, L"dwErr=%d", dwErr);
         OutputDebugString(s);
     }
 
@@ -459,15 +474,23 @@ void GetModuleList(DWORD dwPID)
     {
         do
         {
-            memset(arModAddr[i], 0, sizeof(me.modBaseAddr));
-            memcpy(arModAddr[i], me.modBaseAddr, sizeof(me.modBaseAddr));
-            arModName[i] = (TCHAR*)malloc(sizeof(me.szModule));
-            lstrcpy(arModName[i], me.szModule);
-            i++;
+            if (_tcsicmp((LPCTSTR)me.szModule, (LPCTSTR)szProcName))  // 내 프로세스명과 다른 값은 데이터만 나열함
+            {
+                arModName[i] = (TCHAR*)malloc(sizeof(me.szModule));
+                lstrcpy(arModName[i], me.szModule);
+                arModAddr[i] = me.modBaseAddr;
+                i++;
+            }
+            else // 내 프로세스명과 같은 값이 나오면 PRCESSINFO VIEW에 전체경로를 보여줌
+            {
+                lstrcpy(szProcPath, me.szExePath);
+            }
         } while (Module32Next(hSnapshot, &me));
     }
 
     moduleNum = i;
+    wsprintf(s, L"moduleNum=%d", moduleNum);
+    OutputDebugString(s);
  
     CloseHandle(hSnapshot);
 }
@@ -513,4 +536,17 @@ void SetClientRect(HWND hWnd, int w, int h)
     if (Style & WS_HSCROLL) crt.bottom += GetSystemMetrics(SM_CYVSCROLL);
 
     SetWindowPos(hWnd, NULL, 0, 0, crt.right - crt.left, crt.bottom - crt.top, SWP_NOMOVE | SWP_NOZORDER);
+}
+
+LPCTSTR GetMyFileName()
+{
+    TCHAR szFileName[MAX_PATH];
+
+    if (!GetModuleFileName(NULL, szFileName, MAX_PATH)) return NULL;
+
+    TCHAR* p = _tcsrchr(szFileName, '\\');
+
+    if (p == NULL) NULL;
+
+    return p + 1;
 }
