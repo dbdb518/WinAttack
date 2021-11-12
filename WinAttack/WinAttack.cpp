@@ -178,6 +178,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             //to-do : 메뉴를 구성한다 
             //to-do : 도움말을 보강한다 
             //to-do : 아이콘 만들기
+            //to-do : 프로세스 조회할 때 내 프로세스는 제외
 
             //로그뷰를 생성
             hLogView = CreateWindow(L"edit", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY, HMARGIN, TOPMARGIN + HLISTBOX + HTEXT + VMARGIN, WLOGVIEW, HLOGVIEW, hWnd, (HMENU)ID_LOGVIEW, hInst, NULL);
@@ -188,7 +189,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
             //Privilege를 조정한다.
             LogViewOutput(L"Privilege 조정", 100);
-
             if (SetPrivilege(SE_DEBUG_NAME))
             {
                 LogViewOutput(L"Privilege 조정", 1);
@@ -198,7 +198,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 LogViewOutput(L"Privilege 조정", -1);
                 MessageBox(hWnd, L"Error Occured!\n\nThis Application must be Stopped Immediately!", L"Execution Error", MB_OK);
             }
-
             LogViewOutput(L"Privilege 조정", 900);
 
             //메인 리스트박스를 생성
@@ -328,12 +327,14 @@ BOOL SetPrivilege(LPCTSTR lpszPriv)
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) 
     {
         LogViewOutput(L"OpenProcessToken", -1);
+        OutputDebugString(L"[Error]OpenProcessToken");
         return FALSE;
     }
 
     if (!LookupPrivilegeValue(NULL, lpszPriv, &luid))
     {
         LogViewOutput(L"LookupPrivilegeValue", -1); 
+        OutputDebugString(L"[Error]LookupPrivilegeValue");
         return FALSE;
     }
 
@@ -344,19 +345,20 @@ BOOL SetPrivilege(LPCTSTR lpszPriv)
     if (!AdjustTokenPrivileges(hToken,
                                FALSE,
                                &tp,
-                               0,
-                               NULL,
-                               NULL))
+                               sizeof(TOKEN_PRIVILEGES),
+                               (PTOKEN_PRIVILEGES)NULL,
+                               (PDWORD)NULL))
     {
         LogViewOutput(L"AdjustTokenPrivileges", -1);
+        OutputDebugString(L"[Error]AdjustTokenPrivileges");
         return FALSE;
     }
 
-    //if (GetLastError() == ERROR_NOT_ALL_ASSIGNED)
-    //{
-    //    LogViewOutput(L"ERROR_NOT_ALL_ASSIGNED", -1);
-    //    return FALSE;
-    //}
+    if (GetLastError() == ERROR_NOT_ALL_ASSIGNED)
+    {
+        OutputDebugString(L"GetLastError() : ERROR_NOT_ALL_ASSIGNED");
+        return FALSE;
+    }
 
     return TRUE;
 }
