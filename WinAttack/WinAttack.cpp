@@ -8,6 +8,9 @@
 #define ID_PRCESSINFO_LISTBOX 3000
 #define ID_MODULE_LISTBOX  4000
 #define ID_DLL_LISTBOX  5000
+#define ID_SCAN_BUTTON  6000
+#define ID_INJECT_BUTTON  7000
+#define ID_EJECT_BUTTON  8000
 
 #define TOPMARGIN   30
 #define BOTTOMMARGIN   30
@@ -22,6 +25,12 @@
 #define WMODULELISTBOX    400
 #define HDLLLISTBOX    320
 #define WDLLLISTBOX    200
+#define BUTTONCORDX 1550
+#define BUTTONCORDY 50
+#define WBUTTON 200
+#define HBUTTON 40
+#define BUTTONMARGIN    20
+
 
 // 전역 변수:
 HINSTANCE hInst;                                // 현재 인스턴스입니다.
@@ -60,6 +69,7 @@ void DrawMainListBox();
 void DrawDllListBox();
 void SetClientRect(HWND, int, int);
 LPCTSTR GetMyFileName();
+void InjectDll();
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -183,6 +193,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             //        윈도우 데코레이션
             //        프로세스정보 뷰에 나올 내용을 추가
             //        프로세스 검색 기능을 추가
+            //        특정 프로세스를 선택하면 다운되는 오류
 
             //로그뷰를 생성
             hLogView = CreateWindow(L"edit", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY, HMARGIN, TOPMARGIN + HLISTBOX + HTEXT + VMARGIN, WLOGVIEW, HLOGVIEW, hWnd, (HMENU)ID_LOGVIEW, hInst, NULL);
@@ -215,6 +226,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
             //Process Info 리스트박스를 생성
             hProcessInfoListBox = CreateWindow(L"listbox", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL, HMARGIN + WLISTBOX + HMARGIN, TOPMARGIN + HMODULELISTBOX, WLOGVIEW - WLISTBOX - HMARGIN, HLISTBOX - HMODULELISTBOX - VMARGIN, hWnd, (HMENU)ID_PRCESSINFO_LISTBOX, hInst, NULL);
+
+            //Scan 버튼을 생성
+            CreateWindow(L"button", L"Scan", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY, WBUTTON, HBUTTON, hWnd, (HMENU)ID_SCAN_BUTTON, hInst, NULL);
+
+            //Inject 버튼을 생성
+            CreateWindow(L"button", L"Inject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON + BUTTONMARGIN, WBUTTON, HBUTTON, hWnd, (HMENU)ID_INJECT_BUTTON, hInst, NULL);
+
+            //Eject 버튼을 생성
+            CreateWindow(L"button", L"Eject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON * 2 + BUTTONMARGIN * 2, WBUTTON, HBUTTON, hWnd, (HMENU)ID_EJECT_BUTTON, hInst, NULL);
 
             //윈도우 크기 조정
             int width = HMARGIN + WLOGVIEW + HMARGIN;
@@ -272,6 +292,32 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     SendMessage(hProcessInfoListBox, LB_ADDSTRING, 0, (LPARAM)szProcPath);
                     break;
                 }
+                break;
+            case ID_SCAN_BUTTON:
+                SendMessage(hMainListBox, LB_RESETCONTENT, 0, 0);
+                SendMessage(hModuleListBox, LB_RESETCONTENT, 0, 0);
+                SendMessage(hDllListBox, LB_RESETCONTENT, 0, 0);
+                SendMessage(hProcessInfoListBox, LB_RESETCONTENT, 0, 0);
+
+                LogViewOutput(L"실행중인 프로세스 조회", 100);
+                GetProcessList();
+                LogViewOutput(L"실행중인 프로세스 조회", 900);
+
+                //프로세스 목록을 배열에서 가져와서 메인 리스트박스에 보여줌
+                LogViewOutput(L"프로세스 목록 출력", 100);
+                DrawMainListBox();
+                LogViewOutput(L"프로세스 목록 출력", 900);
+
+                //현재 디렉토리의 DLL 목록을 DLL 리스트박스에 보여줌
+                LogViewOutput(L"DLL 목록 출력", 100);
+                DrawDllListBox();
+                LogViewOutput(L"DLL 목록 출력", 900);
+                break;
+            case ID_INJECT_BUTTON:
+                InjectDll();
+                break;
+            case ID_EJECT_BUTTON:
+                MessageBox(hWnd, L"Eject", L"Button", MB_OK);
                 break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
@@ -514,7 +560,7 @@ void DrawMainListBox()
 //현재 디렉토리의 Dll 목록을 가져와서 Dll 리스트박스에 보여줌
 void DrawDllListBox()
 {
-    SendMessage(hDllListBox, LB_DIR, (WPARAM)DDL_READWRITE | DDL_ARCHIVE, (LPARAM)L"*.dll");
+    SendMessage(hDllListBox, LB_DIR, (WPARAM)DDL_HIDDEN, (LPARAM)L"*.dll");
 
     lstrcpy(szDllDirInfo1, L"[Current Directory]");
     GetCurrentDirectory(MAX_PATH, szDllDirInfo2);
@@ -549,4 +595,20 @@ LPCTSTR GetMyFileName()
     if (p == NULL) NULL;
 
     return p + 1;
+}
+
+void InjectDll()
+{
+    int indexMain = -1;
+    int indexDll = -1;
+
+    indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
+
+    if (indexMain == -1) MessageBox(g_hWnd, L"DLL을 Inject할 프로세스를 선택하세요.", L"Error", MB_OK);
+    else
+    {
+        indexDll = SendMessage(hDllListBox, LB_GETCURSEL, 0, 0);
+
+        if (indexDll == -1) MessageBox(g_hWnd, L"Inject할 DLL을 선택하세요.", L"Error", MB_OK);
+    }
 }
