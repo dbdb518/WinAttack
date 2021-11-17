@@ -69,7 +69,7 @@ void DrawMainListBox();
 void DrawDllListBox();
 void SetClientRect(HWND, int, int);
 LPCTSTR GetMyFileName();
-void InjectDll();
+BOOL InjectDll();
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -222,7 +222,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             hModuleListBox = CreateWindow(L"listbox", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL, HMARGIN + WLISTBOX + HMARGIN, TOPMARGIN, WMODULELISTBOX, HMODULELISTBOX, hWnd, (HMENU)ID_MODULE_LISTBOX, hInst, NULL);
 
             //DLL 리스트박스를 생성
-            hDllListBox = CreateWindow(L"listbox", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL, HMARGIN + WLISTBOX + HMARGIN + WMODULELISTBOX + HMARGIN * 10, TOPMARGIN, WDLLLISTBOX, HDLLLISTBOX, hWnd, (HMENU)ID_MODULE_LISTBOX, hInst, NULL);
+            hDllListBox = CreateWindow(L"listbox", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL, HMARGIN + WLISTBOX + HMARGIN + WMODULELISTBOX + HMARGIN * 10, TOPMARGIN, WDLLLISTBOX, HDLLLISTBOX, hWnd, (HMENU)ID_DLL_LISTBOX, hInst, NULL);
 
             //Process Info 리스트박스를 생성
             hProcessInfoListBox = CreateWindow(L"listbox", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL, HMARGIN + WLISTBOX + HMARGIN, TOPMARGIN + HMODULELISTBOX, WLOGVIEW - WLISTBOX - HMARGIN, HLISTBOX - HMODULELISTBOX - VMARGIN, hWnd, (HMENU)ID_PRCESSINFO_LISTBOX, hInst, NULL);
@@ -314,7 +314,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 LogViewOutput(L"DLL 목록 출력", 900);
                 break;
             case ID_INJECT_BUTTON:
-                InjectDll();
+                LogViewOutput(L"DLL Injection", 100);
+                if (InjectDll())
+                {
+                    LogViewOutput(L"DLL Injection", 900);
+                    MessageBox(g_hWnd, L"DLL Injection 성공!", L"Notice", MB_OK);
+                }
+                else LogViewOutput(L"DLL Injection", -1);
                 break;
             case ID_EJECT_BUTTON:
                 MessageBox(hWnd, L"Eject", L"Button", MB_OK);
@@ -597,18 +603,47 @@ LPCTSTR GetMyFileName()
     return p + 1;
 }
 
-void InjectDll()
+BOOL InjectDll()
 {
     int indexMain = -1;
     int indexDll = -1;
 
+    DWORD dwPID = NULL;  // 해킹될 프로세스의 pid
+    TCHAR szDllName[MAX_PATH]; //inject할 DLL의 파일명
+    TCHAR szDllPath[MAX_PATH]; //inject할 DLL의 전체경로
+
     indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
 
-    if (indexMain == -1) MessageBox(g_hWnd, L"DLL을 Inject할 프로세스를 선택하세요.", L"Error", MB_OK);
+    if (indexMain == -1)
+    {
+        MessageBox(g_hWnd, L"DLL을 Inject할 프로세스를 선택하세요.", L"Error", MB_OK);
+        return FALSE;
+    }
     else
     {
         indexDll = SendMessage(hDllListBox, LB_GETCURSEL, 0, 0);
 
-        if (indexDll == -1) MessageBox(g_hWnd, L"Inject할 DLL을 선택하세요.", L"Error", MB_OK);
+        if (indexDll == -1)
+        {
+            MessageBox(g_hWnd, L"Inject할 DLL을 선택하세요.", L"Error", MB_OK);
+            return FALSE;
+        }
+        else
+        {
+            dwPID = arPID[indexMain]; // pid를 셋팅
+            DlgDirSelectEx(g_hWnd, szDllName, MAX_PATH, ID_DLL_LISTBOX); // inject할 DLL의 파일명을 셋팅
+            GetCurrentDirectory(MAX_PATH, szDllPath); //현재 디렉토리 전체경로를 셋팅
+
+            lstrcat(szDllPath, L"\\");
+            lstrcat(szDllPath, szDllName);
+
+            //TCHAR s[128];
+            //wsprintf(s, L"dwPID=%d, szDllPath=%s", dwPID, szDllPath);
+            //OutputDebugString(s);
+        }
     }
+
+    // Injection 시작
+
+    return TRUE;
 }
