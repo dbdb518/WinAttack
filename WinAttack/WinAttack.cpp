@@ -48,6 +48,9 @@ TCHAR szProcessNum[128];
 TCHAR szDllDirInfo1[128];
 TCHAR szDllDirInfo2[MAX_PATH];
 TCHAR szProcPath[MAX_PATH];                     // 선택된 프로세스의 실행경로
+DWORD dwInjectPID;                              // Inject된 대상 프로세스 아이디
+TCHAR szInjectProcName[2048];                   // Inject된 대상 프로세스명
+TCHAR szInjectDllName[MAX_PATH];                // Inject된 Dll 파일명
 
 // 윈도우 핸들
 HWND hMainListBox;
@@ -55,6 +58,9 @@ HWND hLogView;
 HWND hModuleListBox;
 HWND hDllListBox;
 HWND hProcessInfoListBox;
+HWND hScanButton;
+HWND hInjectButton;
+HWND hEjectButton;
 
 // Function ProtoType
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -228,13 +234,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             hProcessInfoListBox = CreateWindow(L"listbox", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL, HMARGIN + WLISTBOX + HMARGIN, TOPMARGIN + HMODULELISTBOX, WLOGVIEW - WLISTBOX - HMARGIN, HLISTBOX - HMODULELISTBOX - VMARGIN, hWnd, (HMENU)ID_PRCESSINFO_LISTBOX, hInst, NULL);
 
             //Scan 버튼을 생성
-            CreateWindow(L"button", L"Scan", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY, WBUTTON, HBUTTON, hWnd, (HMENU)ID_SCAN_BUTTON, hInst, NULL);
+            hScanButton = CreateWindow(L"button", L"Scan", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY, WBUTTON, HBUTTON, hWnd, (HMENU)ID_SCAN_BUTTON, hInst, NULL);
 
             //Inject 버튼을 생성
-            CreateWindow(L"button", L"Inject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON + BUTTONMARGIN, WBUTTON, HBUTTON, hWnd, (HMENU)ID_INJECT_BUTTON, hInst, NULL);
+            hInjectButton = CreateWindow(L"button", L"Inject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON + BUTTONMARGIN, WBUTTON, HBUTTON, hWnd, (HMENU)ID_INJECT_BUTTON, hInst, NULL);
 
             //Eject 버튼을 생성
-            CreateWindow(L"button", L"Eject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON * 2 + BUTTONMARGIN * 2, WBUTTON, HBUTTON, hWnd, (HMENU)ID_EJECT_BUTTON, hInst, NULL);
+            hEjectButton = CreateWindow(L"button", L"Eject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON * 2 + BUTTONMARGIN * 2, WBUTTON, HBUTTON, hWnd, (HMENU)ID_EJECT_BUTTON, hInst, NULL);
 
             //윈도우 크기 조정
             int width = HMARGIN + WLOGVIEW + HMARGIN;
@@ -284,7 +290,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
                     for (i = 0; i < moduleNum; i++)
                     {
-                        SendMessage(hModuleListBox, LB_ADDSTRING, 0, (LPARAM)arModName[i]);
+                        // 모듈이 Inject된 dll일 경우의 처리
+                        if (!lstrcmpi(arModName[i], szInjectDllName))
+                        {
+                            TCHAR s[2048];
+                            lstrcpy(s, szInjectDllName);
+                            lstrcat(s, L"       [ --- Module Injected --- ]");
+                            SendMessage(hModuleListBox, LB_ADDSTRING, 0, (LPARAM)s);
+                        }
+                        else
+                        {
+                            SendMessage(hModuleListBox, LB_ADDSTRING, 0, (LPARAM)arModName[i]);
+                        }
                     }
 
                     // 프로세스정보 뷰에 프로세스의 실행경로를 보여줌
@@ -318,7 +335,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 if (InjectDll())
                 {
                     LogViewOutput(L"DLL Injection", 900);
-                    MessageBox(g_hWnd, L"DLL Injection 성공!", L"Notice", MB_OK);
+
+                    TCHAR s[1024];
+                    wsprintf(s, L"DLL Injection 성공!\n\n\n\n대상 프로세스 : %s\n\n대상 프로세스의 PID : %d\n\nInjected DLL : %s", szInjectProcName, dwInjectPID, szInjectDllName);
+                    MessageBox(g_hWnd, s, L"Notice", MB_OK);
+
+                    //화면을 갱신함
+                    SendMessage(hScanButton, BM_CLICK, (WPARAM)0, (LPARAM)0);
                 }
                 else LogViewOutput(L"DLL Injection", -1);
                 break;
@@ -566,7 +589,7 @@ void DrawMainListBox()
 //현재 디렉토리의 Dll 목록을 가져와서 Dll 리스트박스에 보여줌
 void DrawDllListBox()
 {
-    SendMessage(hDllListBox, LB_DIR, (WPARAM)DDL_HIDDEN, (LPARAM)L"*.dll");
+    SendMessage(hDllListBox, LB_DIR, (WPARAM)DDL_READWRITE, (LPARAM)L"*.dll");
 
     lstrcpy(szDllDirInfo1, L"[Current Directory]");
     GetCurrentDirectory(MAX_PATH, szDllDirInfo2);
@@ -609,8 +632,16 @@ BOOL InjectDll()
     int indexDll = -1;
 
     DWORD dwPID = NULL;  // 해킹될 프로세스의 pid
+    TCHAR szProcName[2048];  // 해킹될 프로세스의 프로세스명
     TCHAR szDllName[MAX_PATH]; //inject할 DLL의 파일명
     TCHAR szDllPath[MAX_PATH]; //inject할 DLL의 전체경로
+
+    HANDLE hProcess = NULL;  // 해킹될 프로세스의 핸들
+    LPVOID pMemAlloc = NULL; // 해킹될 프로세스의 새로 할당된 메모리 영역
+
+    HMODULE hMod = NULL;    // Handle of kernel32.dll
+    LPTHREAD_START_ROUTINE pThreadProc; // Address of LoadLibraryW
+    HANDLE hRemoteThread = NULL;   // Handle of CreateRemoteThread
 
     indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
 
@@ -630,7 +661,9 @@ BOOL InjectDll()
         }
         else
         {
-            dwPID = arPID[indexMain]; // pid를 셋팅
+            dwPID = arPID[indexMain]; // 대상 프로세스의 pid를 셋팅
+            lstrcpy(szProcName, arProcName[indexMain]);   // 대상 프로세스의 프로세스명을 셋팅
+
             DlgDirSelectEx(g_hWnd, szDllName, MAX_PATH, ID_DLL_LISTBOX); // inject할 DLL의 파일명을 셋팅
             GetCurrentDirectory(MAX_PATH, szDllPath); //현재 디렉토리 전체경로를 셋팅
 
@@ -644,6 +677,102 @@ BOOL InjectDll()
     }
 
     // Injection 시작
+    hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwPID);
+
+    if (!hProcess)
+    {
+        OutputDebugString(L"InjectDll Error : OpenProcess Call");
+        return FALSE;
+    }
+
+    DWORD dwAllocSize = (DWORD)(_tcslen(szDllPath) + 1) * sizeof(TCHAR);
+
+    pMemAlloc = VirtualAllocEx(hProcess, NULL, dwAllocSize, MEM_COMMIT, PAGE_READWRITE);
+
+    if (!pMemAlloc)
+    {
+        OutputDebugString(L"InjectDll Error : VirtualAllocEx Call");
+        TCHAR s[128];
+        DWORD dwErr = GetLastError();
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            dwErr,
+            MAKELANGID(LANG_NEUTRAL,
+                SUBLANG_DEFAULT),
+            s, 256, NULL);
+
+        OutputDebugString(s);
+        return FALSE;
+    }
+
+    if (!WriteProcessMemory(hProcess, pMemAlloc, (LPVOID)szDllPath, dwAllocSize, NULL))
+    {
+        OutputDebugString(L"InjectDll Error : WriteProcessMemory Call");
+        TCHAR s[128];
+        DWORD dwErr = GetLastError();
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            dwErr,
+            MAKELANGID(LANG_NEUTRAL,
+                SUBLANG_DEFAULT),
+            s, 256, NULL);
+
+        OutputDebugString(s);
+        return FALSE;
+    }
+
+    hMod = GetModuleHandle(L"kernel32.dll");
+
+    pThreadProc = (LPTHREAD_START_ROUTINE)GetProcAddress(hMod, "LoadLibraryW");
+
+    if (!pThreadProc)
+    {
+        OutputDebugString(L"InjectDll Error : GetProcAddress Call");
+        TCHAR s[128];
+        DWORD dwErr = GetLastError();
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            dwErr,
+            MAKELANGID(LANG_NEUTRAL,
+                SUBLANG_DEFAULT),
+            s, 256, NULL);
+
+        OutputDebugString(s);
+        return FALSE;
+    }
+
+    hRemoteThread = CreateRemoteThread(hProcess,
+                                       NULL,
+                                       0,
+                                       pThreadProc,
+                                       pMemAlloc,
+                                       0,
+                                       NULL);
+
+    if (!hRemoteThread)
+    {
+        OutputDebugString(L"InjectDll Error : CreateRemoteThread Call");
+        TCHAR s[128];
+        DWORD dwErr = GetLastError();
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            dwErr,
+            MAKELANGID(LANG_NEUTRAL,
+                SUBLANG_DEFAULT),
+            s, 256, NULL);
+
+        OutputDebugString(s);
+        return FALSE;
+    }
+
+    WaitForSingleObject(hRemoteThread, INFINITE);
+
+    dwInjectPID = dwPID;
+    lstrcpy(szInjectProcName, szProcName);
+    lstrcpy(szInjectDllName, szDllName);
+
+    CloseHandle(hRemoteThread);
+    CloseHandle(hProcess);
 
     return TRUE;
 }
