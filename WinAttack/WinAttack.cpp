@@ -51,6 +51,10 @@ TCHAR szProcPath[MAX_PATH];                     // 선택된 프로세스의 실
 DWORD dwInjectPID;                              // Inject된 대상 프로세스 아이디
 TCHAR szInjectProcName[2048];                   // Inject된 대상 프로세스명
 TCHAR szInjectDllName[MAX_PATH];                // Inject된 Dll 파일명
+DWORD dwEjectPID;                               // Eject 대상 프로세스 아이디
+TCHAR szEjectProcName[2048];                    // Eject 대상 프로세스명
+TCHAR szEjectDllName[MAX_PATH];                 // Eject된 Dll 파일명
+
 
 // 윈도우 핸들
 HWND hMainListBox;
@@ -76,6 +80,7 @@ void DrawDllListBox();
 void SetClientRect(HWND, int, int);
 LPCTSTR GetMyFileName();
 BOOL InjectDll();
+BOOL EjectDll();
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -346,7 +351,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 else LogViewOutput(L"DLL Injection", -1);
                 break;
             case ID_EJECT_BUTTON:
-                MessageBox(hWnd, L"Eject", L"Button", MB_OK);
+                LogViewOutput(L"DLL Ejection", 100);
+                if (EjectDll())
+                {
+                    LogViewOutput(L"DLL Ejection", 900);
+
+                    TCHAR s[1024];
+                    wsprintf(s, L"DLL Ejection 성공!\n\n\n\n대상 프로세스 : %s\n\n대상 프로세스의 PID : %d\n\nEjected DLL : %s", szEjectProcName, dwEjectPID, szEjectDllName);
+                    MessageBox(g_hWnd, s, L"Notice", MB_OK);
+
+                    //화면을 갱신함
+                    SendMessage(hScanButton, BM_CLICK, (WPARAM)0, (LPARAM)0);
+                }
+                else LogViewOutput(L"DLL Injection", -1);
                 break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
@@ -770,6 +787,115 @@ BOOL InjectDll()
     dwInjectPID = dwPID;
     lstrcpy(szInjectProcName, szProcName);
     lstrcpy(szInjectDllName, szDllName);
+
+    CloseHandle(hRemoteThread);
+    CloseHandle(hProcess);
+
+    return TRUE;
+}
+
+BOOL EjectDll()
+{
+    int indexMain = -1;
+    int indexDll = -1;
+
+    DWORD dwPID = NULL;  // 해킹될 프로세스의 pid
+    TCHAR szProcName[2048];  // 해킹될 프로세스의 프로세스명
+    TCHAR szDllName[MAX_PATH]; //inject할 DLL의 파일명
+
+    HANDLE hProcess = NULL;  // 해킹될 프로세스의 핸들
+
+    HMODULE hMod = NULL;    // Handle of kernel32.dll
+    LPTHREAD_START_ROUTINE pThreadProc; // Address of LoadLibraryW
+    HANDLE hRemoteThread = NULL;   // Handle of CreateRemoteThread
+
+    indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
+
+    if (indexMain == -1)
+    {
+        MessageBox(g_hWnd, L"DLL이 Eject될 프로세스를 선택하세요.", L"Error", MB_OK);
+        return FALSE;
+    }
+    else
+    {
+        indexDll = SendMessage(hModuleListBox, LB_GETCURSEL, 0, 0);
+
+        if (indexDll == -1)
+        {
+            MessageBox(g_hWnd, L"Eject할 DLL을 선택하세요.", L"Error", MB_OK);
+            return FALSE;
+        }
+        else
+        {
+            dwPID = arPID[indexMain]; // 대상 프로세스의 pid를 셋팅
+
+            lstrcpy(szProcName, arProcName[indexMain]);   // 대상 프로세스의 프로세스명을 셋팅
+            lstrcpy(szDllName, arModName[indexDll]);      // Eject될 DLL명을 셋팅
+
+            //TCHAR s[128];
+            //wsprintf(s, L"dwPID=%d, szDllName=%s, arModName[indexDll]=%s", dwPID, szDllName, arModName[indexDll]);
+            //OutputDebugString(s);
+        }
+    }
+
+    // Injection 시작
+    hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwPID);
+
+    if (!hProcess)
+    {
+        OutputDebugString(L"EjectDll Error : OpenProcess Call");
+        return FALSE;
+    }
+
+    hMod = GetModuleHandle(L"kernel32.dll");
+
+    pThreadProc = (LPTHREAD_START_ROUTINE)GetProcAddress(hMod, "FreeLibrary");
+
+    if (!pThreadProc)
+    {
+        OutputDebugString(L"EjectDll Error : GetProcAddress Call");
+        TCHAR s[128];
+        DWORD dwErr = GetLastError();
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            dwErr,
+            MAKELANGID(LANG_NEUTRAL,
+                SUBLANG_DEFAULT),
+            s, 256, NULL);
+
+        OutputDebugString(s);
+        return FALSE;
+    }
+
+    hRemoteThread = CreateRemoteThread(hProcess,
+        NULL,
+        0,
+        pThreadProc,
+        arModAddr[indexDll],
+        0,
+        NULL);
+
+    if (!hRemoteThread)
+    {
+        OutputDebugString(L"EjectDll Error : CreateRemoteThread Call");
+        TCHAR s[128];
+        DWORD dwErr = GetLastError();
+        FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            dwErr,
+            MAKELANGID(LANG_NEUTRAL,
+                SUBLANG_DEFAULT),
+            s, 256, NULL);
+
+        OutputDebugString(s);
+        return FALSE;
+    }
+
+    WaitForSingleObject(hRemoteThread, INFINITE);
+
+    dwEjectPID = dwPID;
+    lstrcpy(szEjectProcName, szProcName);
+    lstrcpy(szEjectDllName, szDllName);
 
     CloseHandle(hRemoteThread);
     CloseHandle(hProcess);
