@@ -3,7 +3,6 @@
 // WinAttack.rc에서 사용되고 있습니다.
 //
 #define IDC_MYICON                      2
-#define IDD_CODEINJECT                  110
 #define IDD_WINATTACK_DIALOG            102
 #define IDS_APP_TITLE                   103
 #define IDD_ABOUTBOX                    103
@@ -12,6 +11,7 @@
 #define IDI_WINATTACK                   107
 #define IDI_SMALL                       108
 #define IDC_WINATTACK                   109
+#define IDD_CODEINJECT                  110
 #define IDR_MAINFRAME                   128
 #define IDC_EDIT                        1000
 #define IDC_STATIC                      -1
