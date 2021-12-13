@@ -9,8 +9,9 @@
 #define ID_MODULE_LISTBOX  4000
 #define ID_DLL_LISTBOX  5000
 #define ID_SCAN_BUTTON  6000
-#define ID_INJECT_BUTTON  7000
-#define ID_EJECT_BUTTON  8000
+#define ID_DLLINJECT_BUTTON  7000
+#define ID_DLLEJECT_BUTTON  8000
+#define ID_CODEINJECT_BUTTON  9000
 
 #define TOPMARGIN   30
 #define BOTTOMMARGIN   30
@@ -30,6 +31,7 @@
 #define WBUTTON 200
 #define HBUTTON 40
 #define BUTTONMARGIN    20
+#define CODEINJECTIONMSGLEN 256
 
 
 // 전역 변수:
@@ -54,6 +56,7 @@ TCHAR szInjectDllName[MAX_PATH];                // Inject된 Dll 파일명
 DWORD dwEjectPID;                               // Eject 대상 프로세스 아이디
 TCHAR szEjectProcName[2048];                    // Eject 대상 프로세스명
 TCHAR szEjectDllName[MAX_PATH];                 // Eject된 Dll 파일명
+TCHAR sDlgResult[CODEINJECTIONMSGLEN];                          // Inject할 문자열
 
 
 // 윈도우 핸들
@@ -63,8 +66,9 @@ HWND hModuleListBox;
 HWND hDllListBox;
 HWND hProcessInfoListBox;
 HWND hScanButton;
-HWND hInjectButton;
-HWND hEjectButton;
+HWND hDllInjectButton;
+HWND hDllEjectButton;
+HWND hCodeInjectButton;
 
 // Function ProtoType
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -81,6 +85,8 @@ void SetClientRect(HWND, int, int);
 LPCTSTR GetMyFileName();
 BOOL InjectDll();
 BOOL EjectDll();
+INT_PTR CALLBACK CodeInjectDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+BOOL InjectCode();
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -241,11 +247,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             //Scan 버튼을 생성
             hScanButton = CreateWindow(L"button", L"Scan", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY, WBUTTON, HBUTTON, hWnd, (HMENU)ID_SCAN_BUTTON, hInst, NULL);
 
-            //Inject 버튼을 생성
-            hInjectButton = CreateWindow(L"button", L"Inject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON + BUTTONMARGIN, WBUTTON, HBUTTON, hWnd, (HMENU)ID_INJECT_BUTTON, hInst, NULL);
+            //Dll Inject 버튼을 생성
+            hDllInjectButton = CreateWindow(L"button", L"Dll Inject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON + BUTTONMARGIN, WBUTTON, HBUTTON, hWnd, (HMENU)ID_DLLINJECT_BUTTON, hInst, NULL);
 
-            //Eject 버튼을 생성
-            hEjectButton = CreateWindow(L"button", L"Eject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON * 2 + BUTTONMARGIN * 2, WBUTTON, HBUTTON, hWnd, (HMENU)ID_EJECT_BUTTON, hInst, NULL);
+            //Dll Eject 버튼을 생성
+            hDllEjectButton = CreateWindow(L"button", L"Dll Eject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON * 2 + BUTTONMARGIN * 2, WBUTTON, HBUTTON, hWnd, (HMENU)ID_DLLEJECT_BUTTON, hInst, NULL);
+
+            //Code Inject 버튼을 생성
+            hCodeInjectButton = CreateWindow(L"button", L"Code Inject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON * 3 + BUTTONMARGIN * 3, WBUTTON, HBUTTON, hWnd, (HMENU)ID_CODEINJECT_BUTTON, hInst, NULL);
 
             //윈도우 크기 조정
             int width = HMARGIN + WLOGVIEW + HMARGIN;
@@ -335,7 +344,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 DrawDllListBox();
                 LogViewOutput(L"DLL 목록 출력", 900);
                 break;
-            case ID_INJECT_BUTTON:
+            case ID_DLLINJECT_BUTTON:
                 LogViewOutput(L"DLL Injection", 100);
                 if (InjectDll())
                 {
@@ -350,7 +359,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 }
                 else LogViewOutput(L"DLL Injection", -1);
                 break;
-            case ID_EJECT_BUTTON:
+            case ID_DLLEJECT_BUTTON:
                 LogViewOutput(L"DLL Ejection", 100);
                 if (EjectDll())
                 {
@@ -364,6 +373,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     SendMessage(hScanButton, BM_CLICK, (WPARAM)0, (LPARAM)0);
                 }
                 else LogViewOutput(L"DLL Injection", -1);
+                break;
+            case ID_CODEINJECT_BUTTON:
+                LogViewOutput(L"Code Injection", 100);
+                if (InjectCode())
+                {
+                    LogViewOutput(L"Code Injection", 900);
+
+                }
+                else LogViewOutput(L"Code Injection", -1);               
                 break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
@@ -477,9 +495,9 @@ void LogViewOutput(LPCTSTR lpszMsg, int code)
     GetLocalTime(&stime);
 
     if (code == 100)
-        wsprintf(strTime, L"\r\n%d:%d:%d      ", stime.wHour, stime.wMinute, stime.wSecond);
+        wsprintf(strTime, L"\r\n%02d:%02d:%02d      ", stime.wHour, stime.wMinute, stime.wSecond);
     else
-        wsprintf(strTime, L"%d:%d:%d      ", stime.wHour, stime.wMinute, stime.wSecond);
+        wsprintf(strTime, L"%02d:%02d:%02d      ", stime.wHour, stime.wMinute, stime.wSecond);
 
     switch (code)
     {
@@ -902,3 +920,50 @@ BOOL EjectDll()
 
     return TRUE;
 }
+
+BOOL InjectCode()
+{
+    int indexMain = -1;
+    int iResult = 0;
+
+    indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
+
+    if (indexMain == -1)
+    {
+        MessageBox(g_hWnd, L"Code를 Inject할 프로세스를 선택하세요.", L"Error", MB_OK);
+        return FALSE;
+    }
+    else 
+    {
+        iResult = DialogBox(hInst, MAKEINTRESOURCE(IDD_CODEINJECT), g_hWnd, CodeInjectDlgProc);
+
+        if (iResult == IDOK)
+        {
+            // 확인 버튼 클릭됨
+            OutputDebugString(sDlgResult);
+        }
+    }
+ ;
+    return TRUE;
+}
+
+// Code Injection의 대화상자
+INT_PTR CALLBACK CodeInjectDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_INITDIALOG:
+        return (INT_PTR)TRUE;
+
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
+        {
+            GetDlgItemText(hDlg, IDC_EDIT, sDlgResult, CODEINJECTIONMSGLEN);
+            EndDialog(hDlg, LOWORD(wParam));
+            return (INT_PTR)TRUE;
+        }
+        break;
+    }
+    return (INT_PTR)FALSE;
+}
+
