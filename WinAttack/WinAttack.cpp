@@ -953,7 +953,7 @@ INT_PTR CALLBACK CodeInjectDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARA
     switch (message)
     {
     case WM_INITDIALOG:
-        SetFocus(GetDlgItem(hDlg, IDC_EDIT));
+        //SetFocus(GetDlgItem(hDlg, IDC_EDIT));
         return (INT_PTR)TRUE;
 
     case WM_COMMAND:
