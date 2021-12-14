@@ -56,7 +56,7 @@ TCHAR szInjectDllName[MAX_PATH];                // Inject된 Dll 파일명
 DWORD dwEjectPID;                               // Eject 대상 프로세스 아이디
 TCHAR szEjectProcName[2048];                    // Eject 대상 프로세스명
 TCHAR szEjectDllName[MAX_PATH];                 // Eject된 Dll 파일명
-TCHAR sDlgResult[CODEINJECTIONMSGLEN];                          // Inject할 문자열
+TCHAR sInjectMsg[CODEINJECTIONMSGLEN];          // Code Inject할 문자열
 
 
 // 윈도우 핸들
@@ -87,6 +87,23 @@ BOOL InjectDll();
 BOOL EjectDll();
 INT_PTR CALLBACK CodeInjectDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 BOOL InjectCode();
+DWORD WINAPI InjectedThreadProc(LPVOID lParam);
+
+// Code Injection 할 때 패러미터를 지정하는 구조체
+typedef struct _THREAD_PARAM
+{
+    FARPROC pFunc[2];
+    char szBuf[4][128];
+} THREAD_PARAM, *PTHREAD_PARAM;
+
+// LoadLibraryA()
+typedef HMODULE (WINAPI* PFLOADLIBRARY)(LPCSTR lpLibFileName);
+
+// GetProcAddress()
+typedef FARPROC (WINAPI* PFGETPROCADDRESS)(HMODULE hModule, LPCSTR lpProcName);
+
+// MessageBoxA()
+typedef int (WINAPI* PFMESSAGEBOXA)(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption, UINT uType);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -208,7 +225,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             //        도움말을 보강한다 
             //        아이콘 만들기
             //        윈도우 데코레이션
-            //        프로세스정보 뷰에 나올 내용을 추가
+            //        탭메뉴 구성
             //        프로세스 검색 기능을 추가
             //        특정 프로세스를 선택하면 다운되는 오류
 
@@ -921,10 +938,38 @@ BOOL EjectDll()
     return TRUE;
 }
 
+DWORD WINAPI InjectedThreadProc(LPVOID lParam)
+{
+    PTHREAD_PARAM pParam = (PTHREAD_PARAM)lParam;
+    HMODULE hMod = NULL;
+    FARPROC pFunc = NULL;
+
+    // LoadLibraryA("user32.dll)
+    hMod = ((PFLOADLIBRARY)pParam->pFunc[0])(pParam->szBuf[0]);
+
+    // GetProcAddress("MessageBoxA");
+    pFunc = (FARPROC)((PFGETPROCADDRESS)pParam->pFunc[1])(hMod, pParam->szBuf[1]);
+
+    // MessageBoxA
+    ((PFMESSAGEBOXA)pFunc)(NULL, pParam->szBuf[2], pParam->szBuf[3], MB_OK);
+
+    return 0;
+}
+
 BOOL InjectCode()
 {
     int indexMain = -1;
     int iResult = 0;
+    DWORD dwPID = NULL;  // 해킹될 프로세스의 pid
+    char sAnsi[256];
+
+    HMODULE hMod = NULL;
+    THREAD_PARAM param = { 0, };
+    HANDLE hProcess = NULL;
+    HANDLE hThread = NULL;
+    LPVOID pRemoteBuf[2] = { 0, };
+    DWORD dwSizeParam = sizeof(THREAD_PARAM);
+    DWORD dwSizeThreadProc = (DWORD)InjectCode - (DWORD)InjectedThreadProc;
 
     indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
 
@@ -936,15 +981,44 @@ BOOL InjectCode()
     else 
     {
         iResult = DialogBox(hInst, MAKEINTRESOURCE(IDD_CODEINJECT), g_hWnd, CodeInjectDlgProc);
+        dwPID = arPID[indexMain]; // 해킹될 프로세스의 pid를 셋팅
 
-        if (iResult == IDOK)
-        {
-            // 확인 버튼 클릭됨
-            OutputDebugString(sDlgResult);
+        if (iResult == IDOK) // 확인 버튼 클릭됨
+        {          
+            hMod = GetModuleHandleA("kernel32.dll");
+
+            param.pFunc[0] = GetProcAddress(hMod, "LoadLibraryA");
+            param.pFunc[1] = GetProcAddress(hMod, "GetProcAddress");
+
+            strcpy_s(param.szBuf[0], "user32.dll");
+            strcpy_s(param.szBuf[1], "MessageBoxA");
+            strcpy_s(param.szBuf[2], "Code Injection");
+            wsprintfA(sAnsi, "%S", sInjectMsg);// 대화상자에서 입력 받은 메시지
+            strcpy_s(param.szBuf[3], sAnsi); 
+
+            hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwPID); // dwPID : 해킹될 프로세스의 pid
+
+            pRemoteBuf[0] = VirtualAllocEx(hProcess, NULL, dwSizeParam, MEM_COMMIT, PAGE_READWRITE);
+            WriteProcessMemory(hProcess, pRemoteBuf[0], (LPVOID)&param, dwSizeParam, NULL);
+
+            pRemoteBuf[1] = VirtualAllocEx(hProcess, NULL, dwSizeThreadProc, MEM_COMMIT, PAGE_READWRITE);
+            WriteProcessMemory(hProcess, pRemoteBuf[1], (LPVOID)InjectedThreadProc, dwSizeThreadProc, NULL);
+
+            hThread = CreateRemoteThread(hProcess,
+                                         NULL,
+                                         0,
+                                         (LPTHREAD_START_ROUTINE)pRemoteBuf[1],
+                                         pRemoteBuf[0],
+                                         0,
+                                         NULL);
+
+            WaitForSingleObject(hThread, INFINITE);
+            CloseHandle(hThread);
+            CloseHandle(hProcess);
+
+            return TRUE;
         }
     }
- ;
-    return TRUE;
 }
 
 // Code Injection의 대화상자
@@ -959,7 +1033,7 @@ INT_PTR CALLBACK CodeInjectDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARA
     case WM_COMMAND:
         if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
         {
-            GetDlgItemText(hDlg, IDC_EDIT, sDlgResult, CODEINJECTIONMSGLEN);
+            GetDlgItemText(hDlg, IDC_EDIT, sInjectMsg, CODEINJECTIONMSGLEN);
             EndDialog(hDlg, LOWORD(wParam));
             return (INT_PTR)TRUE;
         }
