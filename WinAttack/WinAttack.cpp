@@ -968,8 +968,6 @@ BOOL InjectCode()
     HANDLE hProcess = NULL;
     HANDLE hThread = NULL;
     LPVOID pRemoteBuf[2] = { 0, };
-    DWORD dwSizeParam = sizeof(THREAD_PARAM);
-    DWORD dwSizeThreadProc = (DWORD)InjectCode - (DWORD)InjectedThreadProc;
 
     indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
 
@@ -992,16 +990,18 @@ BOOL InjectCode()
 
             strcpy_s(param.szBuf[0], "user32.dll");
             strcpy_s(param.szBuf[1], "MessageBoxA");
-            strcpy_s(param.szBuf[2], "Code Injection");
             wsprintfA(sAnsi, "%S", sInjectMsg);// 대화상자에서 입력 받은 메시지
-            strcpy_s(param.szBuf[3], sAnsi); 
+            strcpy_s(param.szBuf[2], sAnsi);
+            strcpy_s(param.szBuf[3], "Code Injection"); 
 
             hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwPID); // dwPID : 해킹될 프로세스의 pid
 
+            DWORD dwSizeParam = sizeof(THREAD_PARAM);
             pRemoteBuf[0] = VirtualAllocEx(hProcess, NULL, dwSizeParam, MEM_COMMIT, PAGE_READWRITE);
             WriteProcessMemory(hProcess, pRemoteBuf[0], (LPVOID)&param, dwSizeParam, NULL);
 
-            pRemoteBuf[1] = VirtualAllocEx(hProcess, NULL, dwSizeThreadProc, MEM_COMMIT, PAGE_READWRITE);
+            DWORD dwSizeThreadProc = (DWORD)InjectCode - (DWORD)InjectedThreadProc;
+            pRemoteBuf[1] = VirtualAllocEx(hProcess, NULL, dwSizeThreadProc, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
             WriteProcessMemory(hProcess, pRemoteBuf[1], (LPVOID)InjectedThreadProc, dwSizeThreadProc, NULL);
 
             hThread = CreateRemoteThread(hProcess,
