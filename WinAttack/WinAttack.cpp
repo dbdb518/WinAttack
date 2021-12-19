@@ -12,6 +12,7 @@
 #define ID_DLLINJECT_BUTTON  7000
 #define ID_DLLEJECT_BUTTON  8000
 #define ID_CODEINJECT_BUTTON  9000
+#define ID_APIHOOK_BUTTON   9010
 
 #define TOPMARGIN   30
 #define BOTTOMMARGIN   30
@@ -69,6 +70,7 @@ HWND hScanButton;
 HWND hDllInjectButton;
 HWND hDllEjectButton;
 HWND hCodeInjectButton;
+HWND hAPIHookButton;
 
 // Function ProtoType
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -88,6 +90,7 @@ BOOL EjectDll();
 INT_PTR CALLBACK CodeInjectDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 BOOL InjectCode();
 DWORD WINAPI InjectedThreadProc(LPVOID lParam);
+BOOL WriteFileHook();
 
 // Code Injection 할 때 패러미터를 지정하는 구조체
 typedef struct _THREAD_PARAM
@@ -273,6 +276,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             //Code Inject 버튼을 생성
             hCodeInjectButton = CreateWindow(L"button", L"Code Inject", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON * 3 + BUTTONMARGIN * 3, WBUTTON, HBUTTON, hWnd, (HMENU)ID_CODEINJECT_BUTTON, hInst, NULL);
 
+            //API Hook 버튼을 생성
+            hAPIHookButton = CreateWindow(L"button", L"WriteFile Hook", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, BUTTONCORDX, BUTTONCORDY + HBUTTON * 4 + BUTTONMARGIN * 4, WBUTTON, HBUTTON, hWnd, (HMENU)ID_APIHOOK_BUTTON, hInst, NULL);
+
             //윈도우 크기 조정
             int width = HMARGIN + WLOGVIEW + HMARGIN;
             int height = TOPMARGIN + HLISTBOX + HTEXT + VMARGIN + HLOGVIEW + BOTTOMMARGIN;
@@ -399,6 +405,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
                 }
                 else LogViewOutput(L"Code Injection", -1);               
+                break;
+            case ID_APIHOOK_BUTTON:
+                LogViewOutput(L"WriteFile Hook", 100);
+                if (WriteFileHook())
+                {
+                    LogViewOutput(L"WriteFile Hook", 900);
+
+                }
+                else LogViewOutput(L"WriteFile Hook", -1);
                 break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
@@ -1042,3 +1057,138 @@ INT_PTR CALLBACK CodeInjectDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARA
     return (INT_PTR)FALSE;
 }
 
+BOOL WriteFileHook()
+{
+    int indexMain = -1;
+    DWORD dwPID = NULL;  // 해킹될 프로세스의 pid
+
+    DEBUG_EVENT de;
+    DWORD decode;
+    LPVOID pfWriteFile = NULL;
+    CREATE_PROCESS_DEBUG_INFO cpdi;
+    BYTE chINT3 = 0xCC;
+    BYTE chOrg = 0;
+
+    CONTEXT context;
+    DWORD dwAddrOfBuffer, dwNumOfBytesToWrite;
+    PBYTE lpBuffer = NULL;
+
+    indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
+
+    if (indexMain == -1)
+    {
+        MessageBox(g_hWnd, L"WriteFile API를 Hook할 프로세스를 선택하세요.", L"Error", MB_OK);
+        return FALSE;
+    }
+    else
+    {
+        dwPID = arPID[indexMain]; // 해킹될 프로세스의 pid를 셋팅
+
+        // Debuggee Process Attach
+        if (!DebugActiveProcess(dwPID))
+        {
+            OutputDebugString(L"WriteFileHook Error : DebugActiveProcess");
+            TCHAR s[128];
+            DWORD dwErr = GetLastError();
+            FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                NULL,
+                dwErr,
+                MAKELANGID(LANG_NEUTRAL,
+                    SUBLANG_DEFAULT),
+                s, 256, NULL);
+
+            OutputDebugString(s);
+            return FALSE;
+        }
+
+        // Debuggee Event Wating
+        while (WaitForDebugEvent(&de, INFINITE))
+        {
+            decode = de.dwDebugEventCode;
+
+            if (decode == CREATE_PROCESS_DEBUG_EVENT)
+            {                
+                // Debuggee의 프로세스 정보 가져옴
+                memcpy(&cpdi, &(de.u.CreateProcessInfo), sizeof(cpdi));
+
+                // WriteFile API의 주소 구함
+                pfWriteFile = GetProcAddress(GetModuleHandleA("kernel32.dll"), "WriteFile");
+
+                // WriteFile API의 첫번째 바이트를 백업
+                ReadProcessMemory(cpdi.hProcess,
+                                  pfWriteFile,
+                                  &chOrg,
+                                  sizeof(BYTE),
+                                  NULL
+                                 );
+
+                // WriteFile API의 첫번째 바이트를 Break Point(0xCC)로 덮어 씀
+                WriteProcessMemory(cpdi.hProcess,
+                                   pfWriteFile,
+                                   &chINT3,
+                                   sizeof(BYTE),
+                                   NULL
+                                  );             
+            }
+            else if (decode == EXCEPTION_DEBUG_EVENT)
+            {
+                // WriteFile 위치에서 BP Exception이 발생하면
+                if (de.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT && de.u.Exception.ExceptionRecord.ExceptionAddress == pfWriteFile)
+                {
+                    // 첫번째 바이트를 원래의 값으로 복원
+                    WriteProcessMemory(cpdi.hProcess,
+                                       pfWriteFile,
+                                       &chOrg,
+                                       sizeof(BYTE),
+                                       NULL
+                                      );
+
+                    context.ContextFlags = CONTEXT_CONTROL;
+                    GetThreadContext(cpdi.hThread, &context);
+
+                    // WriteFile API의 2, 3번째 인수 가져옴
+                    ReadProcessMemory(cpdi.hProcess,
+                                      (LPVOID)(context.Esp + 0x8),
+                                      &dwAddrOfBuffer,
+                                      sizeof(DWORD),
+                                      NULL
+                                     );
+                    ReadProcessMemory(cpdi.hProcess,
+                                      (LPVOID)(context.Esp + 0xC),
+                                      &dwNumOfBytesToWrite,
+                                      sizeof(DWORD),
+                                      NULL
+                                     );
+
+                    // 임시 버퍼 할당
+                    lpBuffer = (PBYTE)malloc(dwNumOfBytesToWrite + 1);
+                    memset(lpBuffer, 0, dwNumOfBytesToWrite + 1);
+
+                    ReadProcessMemory(cpdi.hProcess,
+                                      (LPVOID)dwAddrOfBuffer,
+                                      lpBuffer,
+                                      dwNumOfBytesToWrite,
+                                      NULL
+                                     );
+
+                    TCHAR s[128];
+                    wsprintf(s, L"lpBuffer=%s", lpBuffer);
+                    OutputDebugString(s);
+
+                    free(lpBuffer);
+                }
+
+                continue;
+            }
+            else if (decode == EXIT_PROCESS_DEBUG_EVENT)
+            {
+                break;
+            }
+
+            // 없어도 될 듯함
+            ContinueDebugEvent(de.dwProcessId, de.dwThreadId, DBG_CONTINUE);
+        }
+    }
+
+    return TRUE;
+}
