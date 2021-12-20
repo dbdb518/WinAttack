@@ -1098,6 +1098,10 @@ BOOL WriteFileHook()
                 s, 256, NULL);
 
             OutputDebugString(s);
+
+            //wsprintf(s, L"DebugActiveProcess Error[%d]", dwErr);
+            //LogViewOutput(s, -1);
+
             return FALSE;
         }
 
@@ -1107,7 +1111,7 @@ BOOL WriteFileHook()
             decode = de.dwDebugEventCode;
 
             if (decode == CREATE_PROCESS_DEBUG_EVENT)
-            {                
+            {               
                 // Debuggee의 프로세스 정보 가져옴
                 memcpy(&cpdi, &(de.u.CreateProcessInfo), sizeof(cpdi));
 
@@ -1133,49 +1137,53 @@ BOOL WriteFileHook()
             else if (decode == EXCEPTION_DEBUG_EVENT)
             {
                 // WriteFile 위치에서 BP Exception이 발생하면
-                if (de.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT && de.u.Exception.ExceptionRecord.ExceptionAddress == pfWriteFile)
+                if (de.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT)
                 {
-                    // 첫번째 바이트를 원래의 값으로 복원
-                    WriteProcessMemory(cpdi.hProcess,
-                                       pfWriteFile,
-                                       &chOrg,
-                                       sizeof(BYTE),
-                                       NULL
-                                      );
+                    if (de.u.Exception.ExceptionRecord.ExceptionAddress == pfWriteFile)
+                    {
+                        // 첫번째 바이트를 원래의 값으로 복원
+                        WriteProcessMemory(cpdi.hProcess,
+                            pfWriteFile,
+                            &chOrg,
+                            sizeof(BYTE),
+                            NULL
+                        );
 
-                    context.ContextFlags = CONTEXT_CONTROL;
-                    GetThreadContext(cpdi.hThread, &context);
+                        context.ContextFlags = CONTEXT_CONTROL;
+                        GetThreadContext(cpdi.hThread, &context);
 
-                    // WriteFile API의 2, 3번째 인수 가져옴
-                    ReadProcessMemory(cpdi.hProcess,
-                                      (LPVOID)(context.Esp + 0x8),
-                                      &dwAddrOfBuffer,
-                                      sizeof(DWORD),
-                                      NULL
-                                     );
-                    ReadProcessMemory(cpdi.hProcess,
-                                      (LPVOID)(context.Esp + 0xC),
-                                      &dwNumOfBytesToWrite,
-                                      sizeof(DWORD),
-                                      NULL
-                                     );
+                        // WriteFile API의 2, 3번째 인수 가져옴
+                        ReadProcessMemory(cpdi.hProcess,
+                            (LPVOID)(context.Rsp + 0x8),
+                            &dwAddrOfBuffer,
+                            sizeof(DWORD),
+                            NULL
+                        );
+                        ReadProcessMemory(cpdi.hProcess,
+                            (LPVOID)(context.Rsp + 0xC),
+                            &dwNumOfBytesToWrite,
+                            sizeof(DWORD),
+                            NULL
+                        );
 
-                    // 임시 버퍼 할당
-                    lpBuffer = (PBYTE)malloc(dwNumOfBytesToWrite + 1);
-                    memset(lpBuffer, 0, dwNumOfBytesToWrite + 1);
+                        // 임시 버퍼 할당
+                        lpBuffer = (PBYTE)malloc(dwNumOfBytesToWrite + 1);
+                        memset(lpBuffer, 0, dwNumOfBytesToWrite + 1);
 
-                    ReadProcessMemory(cpdi.hProcess,
-                                      (LPVOID)dwAddrOfBuffer,
-                                      lpBuffer,
-                                      dwNumOfBytesToWrite,
-                                      NULL
-                                     );
+                        ReadProcessMemory(cpdi.hProcess,
+                            (LPVOID)dwAddrOfBuffer,
+                            lpBuffer,
+                            dwNumOfBytesToWrite,
+                            NULL
+                        );
 
-                    TCHAR s[128];
-                    wsprintf(s, L"lpBuffer=%s", lpBuffer);
-                    OutputDebugString(s);
+                        TCHAR s[128];
+                        wsprintf(s, L"lpBuffer=%s", lpBuffer);
+                        OutputDebugString(s);
+                        LogViewOutput(s, -1);
 
-                    free(lpBuffer);
+                        free(lpBuffer);
+                    }
                 }
 
                 continue;
