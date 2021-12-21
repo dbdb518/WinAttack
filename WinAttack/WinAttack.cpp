@@ -1136,9 +1136,9 @@ BOOL WriteFileHook()
             }
             else if (decode == EXCEPTION_DEBUG_EVENT)
             {
-                // WriteFile 위치에서 BP Exception이 발생하면
                 if (de.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT)
                 {
+                    // WriteFile 위치에서 BP Exception이 발생하면
                     if (de.u.Exception.ExceptionRecord.ExceptionAddress == pfWriteFile)
                     {
                         // 첫번째 바이트를 원래의 값으로 복원
@@ -1154,13 +1154,13 @@ BOOL WriteFileHook()
 
                         // WriteFile API의 2, 3번째 인수 가져옴
                         ReadProcessMemory(cpdi.hProcess,
-                            (LPVOID)(context.Rsp + 0x8),
+                            (LPVOID)(context.Esp + 0x8),
                             &dwAddrOfBuffer,
                             sizeof(DWORD),
                             NULL
                         );
                         ReadProcessMemory(cpdi.hProcess,
-                            (LPVOID)(context.Rsp + 0xC),
+                            (LPVOID)(context.Esp + 0xC),
                             &dwNumOfBytesToWrite,
                             sizeof(DWORD),
                             NULL
@@ -1177,16 +1177,37 @@ BOOL WriteFileHook()
                             NULL
                         );
 
-                        TCHAR s[128];
-                        wsprintf(s, L"lpBuffer=%s", lpBuffer);
-                        OutputDebugString(s);
-                        LogViewOutput(s, -1);
+                        for (int i = 0; i < dwNumOfBytesToWrite; i++)
+                        {
+                            if (lpBuffer[i] >= 0x61 && lpBuffer[i] <= 0x7A) lpBuffer[i] -= 0x20;
+                        }
+
+                        WriteProcessMemory(cpdi.hProcess,
+                            (LPVOID)dwAddrOfBuffer,
+                            lpBuffer,
+                            dwNumOfBytesToWrite,
+                            NULL
+                        );
 
                         free(lpBuffer);
-                    }
-                }
 
-                continue;
+                        context.Eip = (DWORD)pfWriteFile;
+                        SetThreadContext(cpdi.hThread, &context);
+
+                        ContinueDebugEvent(de.dwProcessId, de.dwThreadId, DBG_CONTINUE);
+
+                        Sleep(0);
+
+                        WriteProcessMemory(cpdi.hProcess,
+                            pfWriteFile,
+                            &chINT3,
+                            sizeof(BYTE),
+                            NULL
+                        );
+
+                        continue;
+                    }
+                }            
             }
             else if (decode == EXIT_PROCESS_DEBUG_EVENT)
             {
