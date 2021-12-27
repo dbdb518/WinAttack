@@ -13,7 +13,6 @@
 #define ID_DLLEJECT_BUTTON  8000
 #define ID_CODEINJECT_BUTTON  9000
 #define ID_APIHOOK_BUTTON   9010
-#define ID_IATHOOK_BUTTON   9020
 
 #define TOPMARGIN   30
 #define BOTTOMMARGIN   30
@@ -59,8 +58,6 @@ DWORD dwEjectPID;                               // Eject 대상 프로세스 아
 TCHAR szEjectProcName[2048];                    // Eject 대상 프로세스명
 TCHAR szEjectDllName[MAX_PATH];                 // Eject된 Dll 파일명
 TCHAR sInjectMsg[CODEINJECTIONMSGLEN];          // Code Inject할 문자열
-FARPROC pOrgFunc = NULL;                      // SetWindowTextW 함수의 주소
-
 
 // 윈도우 핸들
 HWND hMainListBox;
@@ -73,7 +70,6 @@ HWND hDllInjectButton;
 HWND hDllEjectButton;
 HWND hCodeInjectButton;
 HWND hAPIHookButton;
-HWND hIATHookButton;
 
 // Function ProtoType
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -94,8 +90,6 @@ INT_PTR CALLBACK CodeInjectDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARA
 BOOL InjectCode();
 DWORD WINAPI InjectedThreadProc(LPVOID lParam);
 BOOL WriteFileHook();
-BOOL SetWindowTextWHook();
-BOOL WINAPI MySetWindowTextW(HWND hWnd, LPWSTR lpString);
 
 // Code Injection 할 때 패러미터를 지정하는 구조체
 typedef struct _THREAD_PARAM
@@ -287,9 +281,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             //API Hook 버튼을 생성
             hAPIHookButton = CreateWindow(L"button", L"WriteFile Parameter Hook\nby Debug Event", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_MULTILINE, BUTTONCORDX, BUTTONCORDY + HBUTTON * 4 + BUTTONMARGIN * 4, WBUTTON, HBUTTON, hWnd, (HMENU)ID_APIHOOK_BUTTON, hInst, NULL);
 
-            //IAT Hook 버튼을 생성
-            hIATHookButton = CreateWindow(L"button", L"SetWindowTextW Hook\nby IAT", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_MULTILINE, BUTTONCORDX, BUTTONCORDY + HBUTTON * 5 + BUTTONMARGIN * 5, WBUTTON, HBUTTON, hWnd, (HMENU)ID_IATHOOK_BUTTON, hInst, NULL);
-
             //윈도우 크기 조정
             int width = HMARGIN + WLOGVIEW + HMARGIN;
             int height = TOPMARGIN + HLISTBOX + HTEXT + VMARGIN + HLOGVIEW + BOTTOMMARGIN;
@@ -425,15 +416,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
                 }
                 else LogViewOutput(L"WriteFile Hook", -1);
-                break;
-            case ID_IATHOOK_BUTTON:
-                LogViewOutput(L"SetWindowTextW Hook", 100);
-                if (SetWindowTextWHook())
-                {
-                    LogViewOutput(L"SetWindowTextW Hook", 900);
-
-                }
-                else LogViewOutput(L"SetWindowTextW Hook", -1);
                 break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
@@ -1241,72 +1223,4 @@ BOOL WriteFileHook()
     }
 
     return TRUE;
-}
-
-BOOL SetWindowTextWHook()
-{
-    int indexMain = -1;
-    DWORD dwPID = NULL;  // 해킹될 프로세스의 pid
-
-    HANDLE hWnd;
-    LPCSTR szLib;
-
-    PBYTE pAddr;
-    DWORD dwOldProtect, dwRVA;
-    PIMAGE_IMPORT_DESCRIPTOR pImportDesc;
-
-    indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
-
-    if (indexMain == -1)
-    {
-        MessageBox(g_hWnd, L"SetWindowTextWAPI를 Hook할 프로세스를 선택하세요.", L"Error", MB_OK);
-        return FALSE;
-    }
-
-    dwPID = arPID[indexMain]; // 해킹될 프로세스의 pid를 셋팅
-
-    // SetWindowTextW 함수의 원래 주소를 백업
-    pOrgFunc = GetProcAddress(GetModuleHandleA("user32.dll"), "SetWindowTextW");
-
-    // 해킹될 프로세스의 핸들을 셋팅
-    hWnd = OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwPID);
-
-    if (!hWnd)
-    {
-        OutputDebugString(L"SetWindowTextWHook Error : OpenProcess Call");
-        return FALSE;
-    }
-
-    pAddr = (PBYTE)hWnd;
-    pAddr += *((DWORD*)&pAddr[0x3C]); // IMAGE_NT_HEADERS의 주소
-    //dwRVA = *((DWORD*)&pAddr[0x80]); //RVA to IMAGE_IMPORT_DESCRIPTOR Table
-    //pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)((DWORD)hwnd + dwRVA);
-
-    //TCHAR s[128];
-    //wsprintf(s, L"pImportDesc=%d", pImportDesc);
-    //OutputDebugString(s);
-
-    return TRUE;
-}
-
-// Hooking된 SetWindowTextW 함수
-BOOL WINAPI MySetWindowTextW(HWND hWnd, LPWSTR lpString)
-{
-    TCHAR* pNum = L"영일이삼사오육칠팔구";
-    TCHAR t[2] = { 0, };
-    int i, len, index = 0;
-
-    len = lstrlen(lpString);
-
-    for (i = 0; i < len; i++)
-    {
-        if (lpString[i] >= '0' && lpString[i] <= '9')
-        {
-            t[0] = lpString[i];
-            index = _wtoi(t);
-            lpString[i] = pNum[index];
-        }
-    }
-
-    return ((PFSETWINDOWTEXTW)pOrgFunc)(hWnd, lpString);
 }
