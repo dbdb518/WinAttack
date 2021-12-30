@@ -15,7 +15,7 @@
 #define ID_CODEINJECT_BUTTON  9000
 #define ID_APIHOOK_BUTTON   9010
 #define ID_HIDEPROCESS_BUTTON   9020
-#define HIDEPROCESSDLL  "stealth.dll"
+#define HIDEPROCESSDLL  "HideProcess.dll"
 
 #define TOPMARGIN   30
 #define BOTTOMMARGIN   30
